@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>《水浒传》人物各个章节出现次数分析</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .area {
+            fill-opacity: 0.7;
+        }
+
+        .axis-label {
+            font-size: 12px;
+        }
+
+        .brush .selection {
+            fill: steelblue;
+            fill-opacity: 0.2;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+        }
+
+        .legend {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 12px;
+            max-width: 300px;
+            height: 80%;
+            overflow-y: auto;
+        }
+
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            margin-bottom: 5px;
+            width: calc(33.33% - 10px);
+            box-sizing: border-box;
+            margin-right: 10px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            cursor: pointer;
+        }
+
+        .legend-text {
+            white-space: nowrap;
+        }
+
+        .right-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 330px;
+            background-color: #f0f0f0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            opacity: 1;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+
+        .right-panel-item {
+            display: inline-flex;
+            align-items: center;
+            margin-bottom: 5px;
+            width: calc(33.33% - 10px);
+            box-sizing: border-box;
+            margin-right: 10px;
+        }
+
+        .right-panel-color {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+        }
+
+        .right-panel-chapter {
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        #restoreButton {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #restoreButton:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+
+<body>
+<div id="chart"></div>
+<div id="timeline"></div>
+<div id="legend"></div>
+<div id="right-panel" class="right-panel"></div>
+<button id="restoreButton">恢复</button>
+
+<script>
+    // 设置图表尺寸
+    const margin = { top: 20, right: 380, bottom: 100, left: 50 };
+    const width = window.innerWidth - margin.left - margin.right;
+    const height = window.innerHeight - margin.top - margin.bottom - 100;
+
+    // 创建 SVG 画布
+    const svg = d3.select("#chart")
+        .append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // 创建时间轴 SVG
+    const timelineSvg = d3.select("#timeline")
+        .append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", 100)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${20})`);
+
+    // 创建图例容器
+    const legend = d3.select("#legend");
+
+    // 读取 CSV 文件
+    d3.csv("水浒各章节人物出场次数.csv").then(data => {
+        // 转换数据格式
+        const characters = data.columns.slice(1);
+        data.forEach(d => {
+            d.chapter = +d.chapter;
+            characters.forEach(char => d[char] = +d[char]);
+        });
+
+        // 堆叠数据
+        const stack = d3.stack().keys(characters);
+        const stackedData = stack(data);
+
+        // 设置比例尺
+        const xScale = d3.scaleLinear()
+            .domain([0, 120])
+            .range([0, width]);
+
+        const yScale = d3.scaleLinear()
+            .domain([0, d3.max(stackedData, layer => d3.max(layer, d => d[1]))])
+            .range([height, 0]);
+
+        const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+        // 绘制堆叠面积图
+        const area = d3.area()
+            .x(d => xScale(d.data.chapter))
+            .y0(d => yScale(d[0]))
+            .y1(d => yScale(d[1]));
+
+        svg.selectAll(".area")
+            .data(stackedData)
+            .enter().append("path")
+            .attr("class", "area")
+            .attr("d", area)
+            .attr("fill", d => colorScale(d.key));
+
+        // 添加 X 轴
+        svg.append("g")
+            .attr("transform", `translate(0,${height})`)
+            .call(d3.axisBottom(xScale).ticks(60));
+
+        // 添加 Y 轴
+        svg.append("g")
+            .call(d3.axisLeft(yScale));
+
+        // 添加时间轴
+        const brush = d3.brushX()
+            .extent([[0, 0], [width, 50]])
+            .on("brush", brushed);
+
+        timelineSvg.append("g")
+            .attr("class", "brush")
+            .call(brush);
+
+        timelineSvg.append("g")
+            .attr("transform", `translate(0,${30})`)
+            .call(d3.axisBottom(xScale).ticks(60));
+
+        // 添加右侧图例
+        const rightPanel = d3.select("#right-panel");
+
+        // 添加右侧面板中的回数信息
+        rightPanel.append("div")
+            .attr("class", "right-panel-chapter")
+            .text("回数: 不显示")
+            .style("display", "none");
+
+        // 初始化右侧图例（所有人物出现次数为 0）
+        const initialData = characters.map(char => ({ name: char, count: 0 }));
+        const rightPanelItems = rightPanel.selectAll(".right-panel-item")
+            .data(initialData, d => d.name)
+            .enter().append("div")
+            .attr("class", "right-panel-item");
+
+        rightPanelItems.append("div")
+            .attr("class", "right-panel-color")
+            .style("background-color", d => colorScale(d.name));
+
+        rightPanelItems.append("div")
+            .attr("class", "legend-text")
+            .text(d => `${d.name}: ${d.count}`);
+
+        // 添加鼠标交互
+        const tooltip = d3.select("body").append("div")
+            .attr("class", "tooltip");
+
+        svg.append("rect")
+            .attr("width", width)
+            .attr("height", height)
+            .style("fill", "none")
+            .style("pointer-events", "all")
+            .on("click", click);
+
+        // 时间轴刷选事件
+        function brushed(event) {
+            const selection = event.selection;
+            if (selection) {
+                const [x0, x1] = selection.map(xScale.invert);
+                updateChart(Math.floor(x0), Math.ceil(x1));
+            }
+        }
+
+        // 更新图表
+        function updateChart(startChapter, endChapter) {
+            const filteredData = data.filter(d => d.chapter >= startChapter && d.chapter <= endChapter);
+            const filteredStackedData = stack(filteredData);
+
+            yScale.domain([0, d3.max(filteredStackedData, layer => d3.max(layer, d => d[1]))]);
+
+            svg.selectAll(".area")
+                .data(filteredStackedData)
+                .attr("d", area);
+
+            svg.select(".y-axis").call(d3.axisLeft(yScale));
+        }
+
+        // 鼠标点击事件
+        let selectedCharacter = null;
+
+        function click(event) {
+            const [x] = d3.pointer(event);
+            const chapter = Math.floor(xScale.invert(x));
+
+            const chapterData = data.find(d => d.chapter === chapter);
+
+            if (chapterData) {
+                // 更新右侧图例
+                rightPanel.selectAll(".right-panel-item")
+                    .data(characters.map(char => ({ name: char, count: chapterData[char] })), d => d.name)
+                    .select(".legend-text")
+                    .text(d => `${d.name}: ${d.count}`);
+
+                // 更新回数信息
+                rightPanel.select(".right-panel-chapter")
+                    .text(`回数: ${chapter}`)
+                    .style("display", "block");
+            }
+        }
+
+        // 重置右侧面板图例（点击空白区域时调用）
+        function resetRightPanel() {
+            rightPanel.selectAll(".right-panel-item")
+                .data(initialData, d => d.name)
+                .select(".legend-text")
+                .text(d => `${d.name}: 0`);
+
+            rightPanel.selectAll(".right-panel-chapter")
+                .style("display", "none");
+        }
+
+        // 点击图例小方块事件
+        rightPanel.selectAll(".right-panel-color")
+            .on("click", function(event, d) {
+                if (selectedCharacter === d.name) {
+                    // 如果点击的是已经选中的人物，恢复到初始状态
+                    selectedCharacter = null;
+                    resetRightPanel();
+                } else {
+                    // 选择新的人物，更新状态
+                    selectedCharacter = d.name;
+
+                    // 更新堆叠图颜色
+                    svg.selectAll(".area")
+                        .attr("fill", (layer) => layer.key === d.name ? colorScale(d.name) : "gray");
+
+                    // 更新右侧图例颜色
+                    rightPanel.selectAll(".right-panel-color")
+                        .style("background-color", (item) => item.name === d.name ? colorScale(item.name) : "gray");
+                }
+            });
+
+        // 恢复按钮事件
+        d3.select("#restoreButton").on("click", function() {
+            selectedCharacter = null;
+            resetRightPanel();
+            svg.selectAll(".area")
+                .attr("fill", (layer) => colorScale(layer.key));
+            rightPanel.selectAll(".right-panel-color")
+                .style("background-color", (item) => colorScale(item.name));
+        });
+    });
+</script>
+</body>
+
+</html>
