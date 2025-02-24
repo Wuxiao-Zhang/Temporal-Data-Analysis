@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>世界各国历年GDP分析——柱状图动画</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+
+        svg {
+            width: 100vw;
+            height: 80vh;
+            border: 1px solid #ccc;
+            background-color: white;
+        }
+
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+    </style>
+</head>
+<body>
+<div class="title">世界各国历年GDP分析（二）</div>
+<svg></svg>
+<div class="tooltip"></div>
+<script>
+    const margin = {top: 30, right: 20, bottom: 50, left: 150};
+    const width = window.innerWidth - margin.left - margin.right;
+    const height = window.innerHeight * 0.8 - margin.top - margin.bottom;
+    const svg = d3.select("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom);
+    const chartArea = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+    const tooltip = d3.select(".tooltip");
+
+    // 将GDP值从科学计数法转换为亿单位
+    function formatGDP(gdp) {
+        if (gdp) {
+            return Math.round(gdp / 1e8);  // 转换为亿并四舍五入
+        }
+        return 0;
+    }
+
+    // 读取CSV文件
+    d3.csv("gdp_data_source.csv").then(data => {
+        const years = data.map(d => d.year);
+        const regions = Object.keys(data[0]).filter(key => key !== "year");
+
+        const gdpData = regions.map(region => ({
+            key: region,
+            values: data.map(d => ({
+                year: d.year,
+                gdp: formatGDP(d[region]) // 使用格式化后的GDP
+            }))
+        }));
+
+        let currentYearIndex = 0;
+        let yearDisplay = null;
+        let xAxis = null; // 定义横轴变量
+
+        const updateBars = () => {
+            const currentYear = years[currentYearIndex];
+            // 每年按GDP排序，获取前10名
+            const topGDPData = gdpData.map(region => ({
+                key: region.key,
+                year: currentYear,
+                gdp: region.values.find(v => v.year === currentYear)?.gdp || 0
+            })).sort((a, b) => b.gdp - a.gdp) // 按GDP降序排序
+                .filter(d => d.gdp > 0) // 只保留GDP大于0的数据
+                .slice(0, 10); // 取前10名
+
+            // 定义X轴（年份）
+            const maxGdp = d3.max(topGDPData, d => d.gdp);
+            const xScale = d3.scaleLinear()
+                .domain([0, maxGdp])
+                .range([0, width * 0.8]) // 调整范围，使柱状图不占满整个宽度
+                .nice();
+
+            // 定义Y轴（国家）
+            const yScale = d3.scaleBand()
+                .domain(topGDPData.map(d => d.key))
+                .range([0, height])
+                .padding(0.1);
+
+            // 定义柱状图的宽度
+            const barWidth = 40; // 固定柱状图宽度
+
+            // 数据绑定和更新
+            const bars = chartArea.selectAll(".bar")
+                .data(topGDPData, d => d.key);
+
+            // === 处理退出前十的国家 ===
+            bars.exit()
+                .transition()
+                .duration(100) // 短暂变为红色
+                .attr("fill", "red") // 变为红色
+                .transition()
+                .duration(900) // 短暂延迟后消失
+                .attr("y", 2 * height) // 从屏幕下方消失
+                .attr("width", 0) // 将柱的宽度变为0
+                .remove();
+
+            // === 处理进入前十的国家 ===
+            const newBars = bars.enter()
+                .append("rect")
+                .attr("class", "bar")
+                .attr("x", 0) // 初始化柱状图的位置
+                .attr("y", 2 * height) // 从屏幕下方开始
+                .attr("width", 0)
+                .attr("height", yScale.bandwidth())
+                .attr("fill", "green")
+
+            // === 更新现有柱状图 ===
+            bars.merge(newBars)
+                .transition()
+                .duration(1400)
+                .attr("y", d => yScale(d.key)) // 更新y轴位置
+                .attr("width", d => xScale(d.gdp)) // 更新宽度
+                .attr("height", yScale.bandwidth()) // 更新高度
+                .attr("fill", (d, i, nodes) => {
+                    // 判断是否是新加入的柱状图，使用颜色变化动画
+                    const currentFill = d3.select(nodes[i]).attr("fill");
+                    console.log(currentFill);
+                    if (currentFill !== "red" && currentFill !== "green" && currentFill !== "rgb(0, 128, 0)" && currentFill !== "rgb(255, 0, 0)") {
+                        return "steelblue"; // 临时返回绿色
+                    } else {
+                        return "green"; // 否则保持默认的steelblue
+                    }
+
+                })
+                .transition()
+                .duration(100)
+                .attr("fill", "steelblue"); // 恢复为默认颜色
+
+            // === 更新国家名称 ===
+            const countryNames = chartArea.selectAll(".country-name")
+                .data(topGDPData, d => d.key);
+
+            countryNames.exit()
+                .transition()
+                .duration(1500)
+                .attr("y", 2 * height) // 从屏幕下方消失
+                .remove();
+
+            countryNames.enter()
+                .append("text")
+                .attr("class", "country-name")
+                .attr("x", -10)
+                .attr("y", 2 * height) // 初始从屏幕下方进入
+                .attr("dy", ".35em")
+                .attr("text-anchor", "end")
+                .attr("font-size", "12px")
+                .text(d => d.key)
+                .merge(countryNames)
+                .transition()
+                .duration(1500)
+                .attr("y", d => yScale(d.key) + yScale.bandwidth() / 2);
+
+            // === 更新GDP数值 ===
+            const gdpValues = chartArea.selectAll(".gdp-value")
+                .data(topGDPData, d => d.key);
+
+            // 退出旧数值
+            gdpValues.exit()
+                .transition()
+                .duration(1500)
+                .attr("y", 2 * height) // 从屏幕下方消失
+                .remove();
+
+            const newGdpValues = gdpValues.enter()
+                .append("text")
+                .attr("class", "gdp-value")
+                .attr("y", 2 * height) // 初始纵坐标绑定到排名
+                .attr("dy", ".35em")
+                .attr("font-size", "12px")
+                .attr("opacity", 0) // 初始透明度为0
+                .text(d => `${d.gdp}亿`)
+                .merge(gdpValues)
+                .transition()
+                .duration(1500)
+                .attr("x", d => xScale(d.gdp) + barWidth + 10) // 最终位置在柱状图右侧
+                .attr("y", d => yScale(d.key) + yScale.bandwidth() / 2) // 初始纵坐标绑定到排名
+                .attr("opacity", 1) // 最终透明度为1
+                .tween("text", function(d) {
+                    const currentValue = +this.textContent.replace("亿", ""); // 获取当前GDP值
+                    const targetValue = d.gdp; // 目标GDP值
+                    const interpolator = d3.interpolateNumber(currentValue, targetValue); // 数值插值器
+                    return function(t) {
+                        d3.select(this).text(`${Math.round(interpolator(t))}亿`); // 更新文本
+                    };
+                });
+
+            // 更新年份显示
+            if (yearDisplay) {
+                yearDisplay
+                    .transition()
+                    .duration(1500)
+                    .text(currentYear);
+            } else {
+                yearDisplay = chartArea.append("text")
+                    .attr("class", "year")
+                    .attr("x", width / 2)
+                    .attr("y", height / 2)
+                    .attr("text-anchor", "middle")
+                    .attr("font-size", "60px")
+                    .attr("fill", "#aaa")
+                    .text(currentYear);
+            }
+
+            // 如果到达最后一年的数据，停止动画
+            if (currentYearIndex === years.length - 1) {
+                clearInterval(animationInterval); // 停止动画
+            }
+
+            // 循环更新年份
+            currentYearIndex = (currentYearIndex + 1) % years.length;
+        };
+
+        // 动画控制：每隔1秒更新一次柱状图，直到最后一年的数据
+        const animationInterval = setInterval(updateBars, 1500);
+    }).catch(error => {
+        console.error("加载CSV文件时出错:", error);
+    });
+</script>
+</body>
+</html>

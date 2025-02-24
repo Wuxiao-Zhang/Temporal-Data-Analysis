@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>世界各国历年GDP分析——堆叠图</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+
+        svg {
+            width: 100vw;
+            height: 80vh;
+            border: 1px solid #ccc;
+            background-color: white;
+        }
+
+        .title {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 10px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+    </style>
+</head>
+
+<body>
+<div class="title">世界各国历年GDP分析</div>
+<svg></svg>
+<div class="legend"></div>
+<div class="tooltip"></div>
+
+<script>
+    const margin = { top: 30, right: 20, bottom: 50, left: 150 };
+    const width = window.innerWidth - margin.left - margin.right;
+    const height = window.innerHeight * 0.8 - margin.top - margin.bottom;
+
+    const svg = d3.select("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom);
+
+    const chartArea = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const tooltip = d3.select(".tooltip");
+
+    d3.csv("gdp_data_source.csv", d3.autoType).then(data => {
+        const years = data.map(d => d.year);
+        const regions = Object.keys(data[0]).filter(key => key !== "year");
+
+        const stackedData = regions.map(region => {
+            return {
+                key: region,
+                values: data.map(d => ({
+                    year: d.year,
+                    gdp: d[region] || 0
+                }))
+            };
+        });
+
+        const rankedStackedData = [];
+        years.forEach(year => {
+            let cumulative = 0;
+            const sorted = stackedData
+                .map(region => ({
+                    key: region.key,
+                    year,
+                    gdp: region.values.find(v => v.year === year)?.gdp || 0
+                }))
+                .sort((a, b) => a.gdp - b.gdp); // 按GDP升序排序
+
+            sorted.forEach(region => {
+                rankedStackedData.push({
+                    key: region.key,
+                    year: region.year,
+                    start: cumulative,
+                    end: cumulative + region.gdp
+                });
+                cumulative += region.gdp;
+            });
+        });
+
+        const xScale = d3.scaleBand()
+            .domain(years)
+            .range([0, width])
+            .padding(0.1);
+
+        const yScale = d3.scaleLinear()
+            .domain([0, d3.max(rankedStackedData, d => d.end)])
+            .nice()
+            .range([height, 0]);
+
+        const colorScale = d3.scaleOrdinal()
+            .domain(regions)
+            .range(d3.schemeCategory10);
+
+        const area = d3.area()
+            .x(d => xScale(d.year) + xScale.bandwidth() / 2)
+            .y0(d => yScale(d.start))
+            .y1(d => yScale(d.end))
+            .curve(d3.curveCatmullRom);
+
+        const groupedData = d3.group(rankedStackedData, d => d.key);
+
+        chartArea.selectAll(".layer")
+            .data(groupedData)
+            .enter()
+            .append("path")
+            .attr("class", "layer")
+            .attr("d", d => area(d[1]))
+            .attr("fill", d => colorScale(d[0]))
+            .attr("opacity", 0.8);
+
+        chartArea.selectAll(".layer")
+            .on("mouseenter", function (event, d) {
+                // 高亮当前图层
+                d3.select(this)
+                    .attr("opacity", 1);
+
+                // 将其他图层变为灰色
+                chartArea.selectAll(".layer")
+                    .filter(layer => layer[0] !== d[0])
+                    .attr("opacity", 0.5);
+            })
+            .on("mouseleave", function () {
+                // 恢复所有图层的原始颜色和透明度
+                chartArea.selectAll(".layer")
+                    .attr("opacity", 0.8);
+            });
+
+        chartArea.append("g")
+            .attr("transform", `translate(0,${height})`)
+            .call(d3.axisBottom(xScale).tickSizeOuter(0))
+            .selectAll("text")
+            .attr("transform", "rotate(-45)")
+            .style("text-anchor", "end");
+
+        chartArea.append("g")
+            .call(d3.axisLeft(yScale));
+
+        chartArea.append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("x", -height / 2)
+            .attr("y", -margin.left + 30)
+            .style("text-anchor", "middle")
+            .text("（美元）");
+
+        const legend = d3.select(".legend");
+
+        // 获取 GDP 排名前十的国家
+        const topRegions = regions
+            .map(region => ({
+                key: region,
+                totalGDP: d3.sum(stackedData.find(d => d.key === region).values, d => d.gdp),
+            }))
+            .sort((a, b) => b.totalGDP - a.totalGDP) // 按总 GDP 降序排序
+            .slice(0, 10) // 取前十个
+            .map(d => d.key);
+
+        topRegions.forEach(region => {
+            const legendItem = legend.append("div").attr("class", "legend-item");
+
+            legendItem.append("div")
+                .attr("class", "legend-color")
+                .style("background-color", colorScale(region));
+
+            legendItem.append("div").text(region);
+        });
+
+        chartArea.selectAll(".layer")
+            .on("mouseenter", function (event, d) {
+                // 高亮当前图层
+                d3.select(this)
+                    .attr("fill", "red")
+                    .attr("opacity", 1);
+
+                // 使其他图层变灰
+                chartArea.selectAll(".layer")
+                    .filter(layer => layer[0] !== d[0])
+                    .attr("fill", "lightgray")
+                    .attr("opacity", 0.5);
+            })
+            .on("mousemove", function (event, d) {
+                const [mouseX] = d3.pointer(event);
+
+                const yearIndex = Math.floor((mouseX / width) * years.length);
+                const year = years[Math.max(0, Math.min(yearIndex, years.length - 1))];
+
+                const hoveredRegion = d[0];
+                const value = d[1].find(segment => segment.year === year);
+
+                if (value) {
+                    tooltip.style("opacity", 1)
+                        .style("left", () => {
+                            const tooltipWidth = tooltip.node().offsetWidth;
+                            const pageX = event.pageX;
+                            const windowWidth = window.innerWidth;
+                            const offsetX = 10;
+
+                            // 如果 tooltip 超出右边界，将其左移
+                            return Math.min(pageX + offsetX, windowWidth - tooltipWidth) + "px";
+                        })
+                        .style("top", () => {
+                            const tooltipHeight = tooltip.node().offsetHeight;
+                            const pageY = event.pageY;
+                            const windowHeight = window.innerHeight;
+                            const offsetY = 10;
+
+                            // 如果 tooltip 超出底部边界，将其上移
+                            return Math.min(pageY + offsetY, windowHeight - tooltipHeight) + "px";
+                        })
+                        .html(`
+                                <div><b>年份：</b>${year}</div>
+                                <div><b>地区：</b>${hoveredRegion}</div>
+                                <div><b>值：</b>${(value.end - value.start).toFixed(2)}</div>
+                            `);
+                }
+            })
+            .on("mouseleave", function () {
+                // 恢复所有图层的原始颜色和透明度
+                chartArea.selectAll(".layer")
+                    .attr("fill", layer => colorScale(layer[0]))
+                    .attr("opacity", 0.8);
+
+                tooltip.style("opacity", 0)
+                    .style("left", "-9999px") // 移出视口
+                    .html(""); // 清空内容
+            });
+    }).catch(error => {
+        console.error("加载CSV文件时出错：", error);
+    });
+</script>
+</body>
+
+</html>
